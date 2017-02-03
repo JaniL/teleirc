@@ -38,11 +38,22 @@ config.httpPort = 9090;
 config.httpLocation = 'http://mydomain.com' + ':' + config.httpPort;
 
 // Upload sent photos to Imgur, links to Imgur uploads are
-// forwared to IRC
+// forwarded to IRC
 config.uploadToImgur = false;
 
 // Imgur client id required for uploading photos to Imgur
 config.imgurClientId = 'YOUR-CLIENT-ID';
+
+// Upload sent videos to Streamable, links to Streamable uploads
+// are forwarded to IRC
+config.uploadToStreamable = false;
+
+// Streamable username. Not required - only if you don't want to upload
+// anonymously and want to track your uploads.
+config.streambleUsername = '';
+
+// Streamable password
+config.streamablePassword = '';
 
 // Whether to allow sending messages to IRC without nick prefix
 config.allowCommands = false;

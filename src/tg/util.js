@@ -10,6 +10,9 @@ var logger = require('winston');
 var imgur = require('imgur');
 var os = require('os');
 
+var Streamable = require('streamable-js').Streamable;
+var STATUS_CODE = require('streamable-js').STATUS_CODE;
+
 if (config.uploadToImgur) {
     imgur.setClientId(config.imgurClientId);
 }
@@ -121,6 +124,38 @@ exports.uploadToImgur = function(fileId, config, tg, callback) {
         });
 };
 
+exports.uploadToStreamable = function(msg, config, tg, callback) {
+    var file_id;
+    var file_size;
+    if ('document' in msg) {
+        file_id = msg.document.file_id;
+        file_size = msg.document.file_size;
+    } else {
+        file_id = msg.video.file_id;
+        file_size = msg.video.file_size;
+    }
+    // "Video files must be smaller than 10GB in size
+    // and 10 minutes in length."
+    if (msg.video.duration > 60 * 10 ||
+        file_size > 10000000000) {
+        return;
+    }
+    var filesPath = os.tmpdir();
+    var randomString = exports.randomValueBase64(config.mediaRandomLength);
+    mkdirp(path.join(filesPath, randomString));
+    tg.downloadFile(file_id, path.join(filesPath, randomString))
+    .then(function(filePath) {
+        var streamable = new Streamable();
+        streamable.uploadVideo(filePath, msg.caption).then(function(resp) {
+            streamable.waitFor(resp.shortcode, STATUS_CODE.READY)
+            .then(function(resp) {
+                callback('http://' + resp.url);
+            });
+        });
+    });
+
+};
+
 exports.initHttpServer = function() {
     var filesPath = path.join(osHomedir(), '.teleirc', 'files');
     mkdirp(filesPath);
@@ -188,6 +223,10 @@ var reconstructMarkdown = function(msg) {
     });
 };
 
+exports.msgIsVideo = function(msg) {
+    return msg.video || (msg.document && msg.document.mime_type.startsWith('video/'));
+};
+
 exports.parseMsg = function(msg, myUser, tg, callback) {
     // TODO: Telegram code should not have to deal with IRC channels at all
 
@@ -226,7 +265,8 @@ exports.parseMsg = function(msg, myUser, tg, callback) {
                 msg.voice || msg.contact || msg.location) && !config.showMedia) {
         // except if the media object is an photo and imgur uploading is
         // enabled
-        if (!(msg.photo && config.uploadToImgur)) {
+        if (!((msg.photo && config.uploadToImgur) ||
+            (config.uploadToStreamable && exports.msgIsVideo(msg)))) {
             return callback();
         }
     }
@@ -319,12 +359,21 @@ exports.parseMsg = function(msg, myUser, tg, callback) {
             });
         });
     } else if (msg.document) {
-        exports.serveFile(msg.document.file_id, config, tg, function(url) {
-            callback({
-                channel: channel,
-                text: prefix + '(Document) ' + url
+        if (config.uploadToStreamable && msg.document.mime_type.startsWith('video/')) {
+            exports.uploadToStreamable(msg, config, tg, function(url) {
+                callback({
+                    channel: channel,
+                    text: prefix + '(Video) ' +
+                    url + (msg.caption ? ' ' + msg.caption : '')
+                });});
+        } else {
+            exports.serveFile(msg.document.file_id, config, tg, function(url) {
+                callback({
+                    channel: channel,
+                    text: prefix + '(Document) ' + url
+                });
             });
-        });
+        }
     } else if (msg.photo) {
         // pick the highest quality photo
         var photo = msg.photo[msg.photo.length - 1];
@@ -373,13 +422,23 @@ exports.parseMsg = function(msg, myUser, tg, callback) {
             });
         });
     } else if (msg.video) {
-        exports.serveFile(msg.video.file_id, config, tg, function(url) {
-            callback({
-                channel: channel,
-                text: prefix + '(Video, ' + msg.video.duration + 's)' +
+        if (config.uploadToStreamable) {
+            exports.uploadToStreamable(msg, config, tg, function(url) {
+                callback({
+                    channel: channel,
+                    text: prefix + '(Video, ' + msg.video.duration + 's) ' +
                     url + (msg.caption ? ' ' + msg.caption : '')
+                });
             });
-        });
+        } else {
+            exports.serveFile(msg.video.file_id, config, tg, function(url) {
+                callback({
+                    channel: channel,
+                    text: prefix + '(Video, ' + msg.video.duration + 's) ' +
+                      url + (msg.caption ? ' ' + msg.caption : '')
+                });
+            });
+        }
     } else if (msg.voice) {
         exports.serveFile(msg.voice.file_id, config, tg, function(url) {
             callback({
